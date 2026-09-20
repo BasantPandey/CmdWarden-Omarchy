@@ -94,6 +94,54 @@ type AuditRecord struct {
 	PID     int    `json:"pid,omitempty"`
 }
 
+// PolicyLevel is how much an enrolled Launcher is trusted, per the
+// Windows CmdWarden policy matrix (auto-allow by level x class).
+type PolicyLevel string
+
+const (
+	LevelDeny    PolicyLevel = "Deny"
+	LevelRead    PolicyLevel = "Read"
+	LevelTrusted PolicyLevel = "Trusted"
+	LevelFull    PolicyLevel = "Full"
+)
+
+// LauncherKind is how a Launcher was enrolled — enrollment is explicit
+// only, and the kind picks the default PolicyLevel (see
+// DefaultLevelForKind): ai-harness -> Read, terminal -> Trusted.
+type LauncherKind string
+
+const (
+	KindAIHarness LauncherKind = "ai-harness"
+	KindTerminal  LauncherKind = "terminal"
+)
+
+// DefaultLevelForKind returns the PolicyLevel a newly enrolled Launcher of
+// this kind starts at.
+func DefaultLevelForKind(kind LauncherKind) (PolicyLevel, error) {
+	switch kind {
+	case KindAIHarness:
+		return LevelRead, nil
+	case KindTerminal:
+		return LevelTrusted, nil
+	default:
+		return "", fmt.Errorf("contracts: unrecognized launcher kind %q (want %q or %q)", kind, KindAIHarness, KindTerminal)
+	}
+}
+
+// PolicyOutcome is a policy pre-check's answer for one (level, class) pair —
+// distinct from Decision (audit.go), which records what a full gate flow
+// (including a human's Approval Gate answer) actually did. A Deny outcome
+// here means "never even ask" (the level itself is Deny, or the Launcher
+// isn't enrolled at all); Prompt means "not auto-allowed, ask the Approval
+// Gate."
+type PolicyOutcome string
+
+const (
+	OutcomeAutoAllow PolicyOutcome = "auto-allow"
+	OutcomePrompt    PolicyOutcome = "prompt"
+	OutcomeDeny      PolicyOutcome = "deny"
+)
+
 // GHVaultSecretName is the vault entry name cw's gh integration (import,
 // harden, gate) stores and releases gh's token under.
 func GHVaultSecretName(hostname string) string {
