@@ -55,6 +55,22 @@ func StateDir() (string, error) {
 	return ensureDir(filepath.Join(base, appDirName))
 }
 
+// DataDir returns $XDG_DATA_HOME/cmdwarden (default ~/.local/share/cmdwarden),
+// creating it (mode 0700) if needed. This is where installed artifacts that
+// aren't config or state live — the Path Shim directory and its PATH
+// bootstrap script.
+func DataDir() (string, error) {
+	base := os.Getenv("XDG_DATA_HOME")
+	if base == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("xdgpaths: resolving home directory: %w", err)
+		}
+		base = filepath.Join(home, ".local", "share")
+	}
+	return ensureDir(filepath.Join(base, appDirName))
+}
+
 // ConfigDir returns $XDG_CONFIG_HOME/cmdwarden (default ~/.config/cmdwarden),
 // creating it (mode 0700) if needed.
 func ConfigDir() (string, error) {

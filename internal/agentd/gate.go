@@ -19,6 +19,7 @@ import (
 	"github.com/godbus/dbus/v5"
 
 	"github.com/BasantPandey/CmdWarden-Omarchy/internal/contracts"
+	"github.com/BasantPandey/CmdWarden-Omarchy/internal/selfpath"
 )
 
 //go:embed qml/shell.qml
@@ -196,16 +197,9 @@ func extractGateQML() (dir string, cleanup func(), err error) {
 }
 
 // resolveCWBinary finds the cw binary to hand the QML for its `cw gate
-// respond` callback: next to this agent's own executable first (the normal
-// case when both are built into the same bin/ directory), then PATH.
+// respond` callback.
 func resolveCWBinary() string {
-	if self, err := os.Executable(); err == nil {
-		sibling := filepath.Join(filepath.Dir(self), "cw")
-		if info, statErr := os.Stat(sibling); statErr == nil && !info.IsDir() {
-			return sibling
-		}
-	}
-	if path, err := exec.LookPath("cw"); err == nil {
+	if path, err := selfpath.Sibling("cw"); err == nil {
 		return path
 	}
 	return "cw" // best-effort fallback; PATH resolution inside qs's own env

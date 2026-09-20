@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/BasantPandey/CmdWarden-Omarchy/internal/contracts"
+	"github.com/BasantPandey/CmdWarden-Omarchy/internal/selfpath"
 	"github.com/BasantPandey/CmdWarden-Omarchy/internal/xdgpaths"
 )
 
@@ -34,7 +35,7 @@ ExecStart=%s
 // starts the socket unit (not the service — the whole point is that the
 // service starts lazily on first connection).
 func InstallUnits() error {
-	agentPath, err := resolveAgentBinary()
+	agentPath, err := selfpath.Sibling("cmdwarden-agent")
 	if err != nil {
 		return err
 	}
@@ -92,20 +93,4 @@ func runSystemctl(args ...string) error {
 		return fmt.Errorf("agentclient: systemctl --user %v: %w", args, err)
 	}
 	return nil
-}
-
-// resolveAgentBinary finds the cmdwarden-agent binary to point ExecStart at:
-// first next to the currently running cw executable (the normal case when
-// both are built into the same bin/ directory), then on PATH.
-func resolveAgentBinary() (string, error) {
-	if self, err := os.Executable(); err == nil {
-		sibling := filepath.Join(filepath.Dir(self), "cmdwarden-agent")
-		if info, statErr := os.Stat(sibling); statErr == nil && !info.IsDir() {
-			return sibling, nil
-		}
-	}
-	if path, err := exec.LookPath("cmdwarden-agent"); err == nil {
-		return path, nil
-	}
-	return "", fmt.Errorf("agentclient: could not find cmdwarden-agent binary next to cw or on PATH")
 }

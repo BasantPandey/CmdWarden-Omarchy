@@ -34,6 +34,7 @@ func NewRootCommand() *cobra.Command {
 	registerHardenCommands(root)
 	registerGateCommands(root)
 	registerAuditCommands(root)
+	registerShimCommands(root)
 	registerDoctorCommand(root)
 
 	return root

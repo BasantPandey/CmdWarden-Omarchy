@@ -183,6 +183,26 @@ func List() ([]Entry, error) {
 	return list, nil
 }
 
+// GetEntry returns identityKey's full enrollment Entry, or a zero-value
+// Entry at LevelDeny with enrolled=false if it isn't enrolled — used where a
+// caller needs the enrollment Kind as well as the Level (e.g. for an audit
+// record's enrollment_kind field), not just the policy decision.
+func GetEntry(identityKey string) (Entry, bool, error) {
+	storeMu.Lock()
+	defer storeMu.Unlock()
+
+	entries, err := load()
+	if err != nil {
+		return Entry{}, false, err
+	}
+	entry, ok := entries[identityKey]
+	if !ok {
+		return Entry{IdentityKey: identityKey, Level: contracts.LevelDeny}, false, nil
+	}
+	entry.IdentityKey = identityKey
+	return entry, true, nil
+}
+
 // Resolve returns identityKey's enrolled level, or (LevelDeny, false) if
 // it's not enrolled — "an unenrolled Launcher's identity key defaults to
 // Deny" is enforced here, at the one place every caller (the dry-run check,

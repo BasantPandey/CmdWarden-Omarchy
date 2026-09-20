@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/BasantPandey/CmdWarden-Omarchy/internal/agentclient"
+	"github.com/BasantPandey/CmdWarden-Omarchy/internal/shim"
 )
 
 // doctorCheck is one independent health check `cw doctor` runs. Later
@@ -21,6 +22,23 @@ var doctorChecks = []doctorCheck{
 		name: "Session Agent",
 		run: func(cmd *cobra.Command) error {
 			return agentclient.WaitHealthy(cmd.Context(), agentWakeTimeout)
+		},
+	},
+	{
+		name: "Shim Pin Drift",
+		run: func(cmd *cobra.Command) error {
+			drifts, err := shim.DetectDrift()
+			if err != nil {
+				return err
+			}
+			if len(drifts) == 0 {
+				return nil
+			}
+			var msg string
+			for _, d := range drifts {
+				msg += fmt.Sprintf("\n  - %s: %s", d.Tool, d.Reason)
+			}
+			return fmt.Errorf("Pin Drift detected:%s", msg)
 		},
 	},
 }
