@@ -8,4 +8,3 @@ import "github.com/spf13/cobra"
 // to extend instead of main.go growing a new import per ticket.
 
 func registerHardenCommands(root *cobra.Command) {}
-func registerGateCommands(root *cobra.Command)   {}

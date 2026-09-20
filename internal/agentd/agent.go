@@ -28,6 +28,9 @@ type Agent struct {
 
 	conn      *dbus.Conn
 	secretSvc *secretservice.Client
+
+	gatesMu sync.Mutex
+	gates   map[string]*pendingGate
 }
 
 // vault returns the agent's Secret Service session, or an error if it
