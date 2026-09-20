@@ -7,7 +7,6 @@ import "github.com/spf13/cobra"
 // no-ops here so the command tree in root.go has a single, stable call site
 // to extend instead of main.go growing a new import per ticket.
 
-func registerWhoamiCommand(root *cobra.Command)  {}
 func registerPolicyCommands(root *cobra.Command) {}
 func registerHardenCommands(root *cobra.Command) {}
 func registerGateCommands(root *cobra.Command)   {}

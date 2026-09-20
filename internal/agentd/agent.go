@@ -26,6 +26,7 @@ type Agent struct {
 	stopOnce sync.Once
 	stopCh   chan struct{}
 
+	conn      *dbus.Conn
 	secretSvc *secretservice.Client
 }
 
@@ -86,6 +87,7 @@ func Run(ctx context.Context) error {
 		return fmt.Errorf("agentd: another process already owns %s (is cmdwarden-agent already running?)", contracts.DBusServiceName)
 	}
 	defer conn.ReleaseName(contracts.DBusServiceName)
+	agent.conn = conn
 
 	secretSvc, err := secretservice.Open(conn)
 	if err != nil {

@@ -6,7 +6,10 @@
 // module split would be pure ceremony.
 package contracts
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // AppName / AgentName are the process/service names used for D-Bus well-known
 // names, systemd unit names, and state directory naming across the project.
@@ -95,4 +98,48 @@ type AuditRecord struct {
 // harden, gate) stores and releases gh's token under.
 func GHVaultSecretName(hostname string) string {
 	return "gh:" + hostname
+}
+
+// Channel is a Launcher's Provenance Channel: which package manager's
+// install tree its resolved binary path lives under, if any.
+type Channel string
+
+const (
+	ChannelPacman    Channel = "pacman"
+	ChannelMise      Channel = "mise"
+	ChannelUnmanaged Channel = "unmanaged"
+)
+
+// IdentityKey identifies a Launcher: <provenance channel>:<tool> for a
+// pacman- or mise-provenance binary (e.g. "mise:claude", "pacman:foot"), or
+// a path+hash identity for a binary with no recognized package-manager
+// provenance (an Unmanaged Launcher). Same-channel version bumps (e.g. mise
+// upgrading a tool in place) resolve to the same IdentityKey because Tool is
+// the channel's own stable name for it (a mise plugin name, a pacman
+// package name) rather than anything version- or path-specific.
+type IdentityKey struct {
+	Channel Channel
+	Tool    string
+	// Path is the resolved Launcher binary's absolute path, kept for
+	// diagnostics — it is not part of String()'s identity for
+	// pacman/mise channels (that's the point: it can change across a
+	// version bump without changing the identity).
+	Path string
+	// Hash is a sha256 hex digest of the binary's contents, populated
+	// only when Channel == ChannelUnmanaged, where there's no
+	// channel-provided stable name to key off instead.
+	Hash string
+}
+
+// String renders the Identity Key in its canonical <channel>:<tool> form
+// (or unmanaged:<tool>@<hash12> for an Unmanaged Launcher).
+func (k IdentityKey) String() string {
+	if k.Channel == ChannelUnmanaged {
+		h := k.Hash
+		if len(h) > 12 {
+			h = h[:12]
+		}
+		return fmt.Sprintf("unmanaged:%s@%s", k.Tool, h)
+	}
+	return fmt.Sprintf("%s:%s", k.Channel, k.Tool)
 }
