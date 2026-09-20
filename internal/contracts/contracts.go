@@ -12,3 +12,20 @@ const (
 	AppName   = "cmdwarden"
 	AgentName = "cmdwarden-agent"
 )
+
+// CommandClass is the risk classification of a gated tool invocation, per
+// the policy matrix (Deny/Read/Trusted/Full policy levels × these classes).
+type CommandClass string
+
+const (
+	// ClassRead covers read-mostly commands: no side effects, no secrets.
+	ClassRead CommandClass = "read"
+	// ClassWrite covers side-effecting or auth-state-changing commands.
+	ClassWrite CommandClass = "write"
+	// ClassSecretReveal covers commands that can print/export a live credential.
+	ClassSecretReveal CommandClass = "secret-reveal"
+	// ClassUnknown covers anything the classifier doesn't recognize. It only
+	// auto-allows under the Full policy level — an unmatched command must
+	// never silently behave as ClassRead.
+	ClassUnknown CommandClass = "unknown"
+)
