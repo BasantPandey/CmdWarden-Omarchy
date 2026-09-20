@@ -6,6 +6,8 @@
 // module split would be pure ceremony.
 package contracts
 
+import "time"
+
 // AppName / AgentName are the process/service names used for D-Bus well-known
 // names, systemd unit names, and state directory naming across the project.
 const (
@@ -50,3 +52,41 @@ const (
 	SocketUnitName  = "cmdwarden-agent.socket"
 	ServiceUnitName = "cmdwarden-agent.service"
 )
+
+// Decision is the outcome of a gate check, per the Windows CmdWarden audit
+// spec's event list — auditable events are gate decisions only.
+type Decision string
+
+const (
+	DecisionAutoAllow    Decision = "auto-allow"
+	DecisionAllowOnce    Decision = "allow-once"
+	DecisionDeny         Decision = "deny"
+	DecisionUnavailable  Decision = "unavailable"
+	DecisionSessionGrant Decision = "session-grant"
+	DecisionSessionAllow Decision = "session-allow"
+)
+
+// AuditRecord is one NDJSON row of the gate-decision audit log. Field names
+// and json tags mirror the Windows CmdWarden audit spec
+// (https://github.com/BasantPandey/CmdWarden/blob/main/docs/spec/cmdwarden.md#9-audit)
+// verbatim, so anyone who already knows that spec can read this log without
+// relearning field names. It deliberately has no field capable of holding a
+// secret value or a full command line — that's enforced by this struct's
+// shape, not by caller discipline.
+type AuditRecord struct {
+	Timestamp      time.Time    `json:"ts"`
+	Decision       Decision     `json:"decision"`
+	ReasonCode     string       `json:"reason_code"`
+	Tool           string       `json:"tool"`
+	CommandClass   CommandClass `json:"command_class"`
+	PolicyLevel    string       `json:"policy_level"`
+	IdentityKey    string       `json:"launcher_policy_key"`
+	LauncherKind   string       `json:"launcher_kind"`
+	EnrollmentKind string       `json:"enrollment_kind"`
+	SecretName     string       `json:"secret_name,omitempty"`
+
+	// Optional, per the spec's "optional purpose/path/pid".
+	Purpose string `json:"purpose,omitempty"`
+	Path    string `json:"path,omitempty"`
+	PID     int    `json:"pid,omitempty"`
+}

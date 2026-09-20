@@ -12,4 +12,3 @@ func registerPolicyCommands(root *cobra.Command) {}
 func registerVaultCommands(root *cobra.Command)  {}
 func registerHardenCommands(root *cobra.Command) {}
 func registerGateCommands(root *cobra.Command)   {}
-func registerAuditCommands(root *cobra.Command)  {}
