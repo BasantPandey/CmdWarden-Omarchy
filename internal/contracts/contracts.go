@@ -29,3 +29,24 @@ const (
 	// never silently behave as ClassRead.
 	ClassUnknown CommandClass = "unknown"
 )
+
+// Session Agent transport constants, shared by the agent (server side) and
+// the cw CLI (client side). The agent has two transports:
+//
+//   - A systemd --user socket-activated Unix socket (see SocketFileName),
+//     whose only job is to (a) give systemd something to lazily activate the
+//     agent on, and (b) answer a trivial line-based PING even before the
+//     agent's D-Bus name registration completes.
+//   - The real D-Bus session bus, where the agent requests DBusServiceName
+//     and exports DBusObjectPath/DBusInterface — this is the actual RPC
+//     surface every later ticket (identity, policy, vault, gate, audit)
+//     builds on.
+const (
+	DBusServiceName = "org.cmdwarden.Agent1"
+	DBusObjectPath  = "/org/cmdwarden/Agent1"
+	DBusInterface   = "org.cmdwarden.Agent1"
+
+	SocketFileName  = "cmdwarden-agent.sock"
+	SocketUnitName  = "cmdwarden-agent.socket"
+	ServiceUnitName = "cmdwarden-agent.service"
+)
