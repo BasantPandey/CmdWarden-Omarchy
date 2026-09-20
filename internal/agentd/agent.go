@@ -16,6 +16,7 @@ import (
 	"github.com/godbus/dbus/v5"
 
 	"github.com/BasantPandey/CmdWarden-Omarchy/internal/contracts"
+	"github.com/BasantPandey/CmdWarden-Omarchy/internal/secretservice"
 )
 
 // Agent is the D-Bus-exported object at contracts.DBusObjectPath. Its
@@ -24,6 +25,18 @@ import (
 type Agent struct {
 	stopOnce sync.Once
 	stopCh   chan struct{}
+
+	secretSvc *secretservice.Client
+}
+
+// vault returns the agent's Secret Service session, or an error if it
+// hasn't been established (it's opened once in Run, right after the D-Bus
+// session bus connection itself — see there).
+func (a *Agent) vault() (*secretservice.Client, error) {
+	if a.secretSvc == nil {
+		return nil, fmt.Errorf("agentd: Secret Service session not available")
+	}
+	return a.secretSvc, nil
 }
 
 // Ping answers the Session Agent's health check. No side effects.
@@ -73,6 +86,12 @@ func Run(ctx context.Context) error {
 		return fmt.Errorf("agentd: another process already owns %s (is cmdwarden-agent already running?)", contracts.DBusServiceName)
 	}
 	defer conn.ReleaseName(contracts.DBusServiceName)
+
+	secretSvc, err := secretservice.Open(conn)
+	if err != nil {
+		return fmt.Errorf("agentd: opening Secret Service session: %w", err)
+	}
+	agent.secretSvc = secretSvc
 
 	if err := conn.Export(agent, contracts.DBusObjectPath, contracts.DBusInterface); err != nil {
 		return fmt.Errorf("agentd: exporting object: %w", err)

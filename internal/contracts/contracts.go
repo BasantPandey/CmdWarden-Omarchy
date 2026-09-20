@@ -90,3 +90,9 @@ type AuditRecord struct {
 	Path    string `json:"path,omitempty"`
 	PID     int    `json:"pid,omitempty"`
 }
+
+// GHVaultSecretName is the vault entry name cw's gh integration (import,
+// harden, gate) stores and releases gh's token under.
+func GHVaultSecretName(hostname string) string {
+	return "gh:" + hostname
+}

@@ -142,17 +142,22 @@ func WaitHealthy(ctx context.Context, overall time.Duration) error {
 		return err
 	}
 
+	// Once the activation socket has answered, the agent process exists
+	// but may still be mid-startup: it can briefly own its D-Bus name
+	// before Export has registered the interface, which surfaces as a
+	// transient (non-ErrNotRunning) error from Ping. Retry any error here
+	// until the deadline rather than just ErrNotRunning, and report the
+	// last-seen error if it never recovers.
 	backoff := 100 * time.Millisecond
+	var lastErr error
 	for {
 		err := Ping(ctx, 1*time.Second)
 		if err == nil {
 			return nil
 		}
-		if err != ErrNotRunning {
-			return err
-		}
+		lastErr = err
 		if time.Now().Add(backoff).After(deadline) {
-			return fmt.Errorf("agentclient: agent did not become healthy within %s", overall)
+			return fmt.Errorf("agentclient: agent did not become healthy within %s (last error: %v)", overall, lastErr)
 		}
 		time.Sleep(backoff)
 		if backoff < time.Second {
