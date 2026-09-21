@@ -21,10 +21,26 @@ const vaultItemSchema = "org.cmdwarden.Secret"
 
 // SaveSecret stores value under name in CmdWarden-Omarchy's vault,
 // overwriting any existing secret with that name.
+//
+// It deletes every existing match for name first, service-wide, rather than
+// relying solely on CreateItem's "replace" flag: EnsureCollection's choice
+// of collection isn't guaranteed stable across calls (its prompt-based
+// CreateCollection path can succeed on one call and fall back to the
+// backend's default collection on another — see EnsureCollection's own
+// doc), and "replace" only ever matches within the single collection
+// CreateItem targets. Without this, a name whose collection choice changed
+// since it was last saved would end up with two live items — one in each
+// collection — and ReleaseSecret/DeleteSecret would then act on whichever
+// one Search happened to list first, silently returning or deleting the
+// wrong one. Enforcing "at most one item per name" here, on every write, is
+// what keeps that invariant true regardless of EnsureCollection's history.
 func (a *Agent) SaveSecret(name string, value string) *dbus.Error {
 	svc, err := a.vault()
 	if err != nil {
 		return dbus.MakeFailedError(err)
+	}
+	if err := deleteAllVaultMatches(svc, name); err != nil {
+		return dbus.MakeFailedError(fmt.Errorf("agentd: clearing existing copies of secret %q before save: %w", name, err))
 	}
 	collection, err := svc.EnsureCollection(vaultCollectionLabel)
 	if err != nil {
@@ -42,32 +58,34 @@ func (a *Agent) SaveSecret(name string, value string) *dbus.Error {
 // CLI's job (see internal/cliapp's `cw vault exec`) to inject it into a
 // single child process's environment and never persist or print it.
 func (a *Agent) ReleaseSecret(name string) (string, *dbus.Error) {
-	item, svc, err := a.findVaultItem(name)
+	svc, err := a.vault()
 	if err != nil {
 		return "", dbus.MakeFailedError(err)
 	}
-	if item == "" {
+	matches, err := findVaultMatches(svc, name)
+	if err != nil {
+		return "", dbus.MakeFailedError(err)
+	}
+	if len(matches) == 0 {
 		return "", dbus.MakeFailedError(fmt.Errorf("agentd: no vault secret named %q", name))
 	}
-	value, err := svc.GetSecretValue(item)
+	value, err := svc.GetSecretValue(matches[0])
 	if err != nil {
 		return "", dbus.MakeFailedError(fmt.Errorf("agentd: releasing secret %q: %w", name, err))
 	}
 	return string(value), nil
 }
 
-// DeleteSecret removes a previously saved secret. Deleting a name that
-// doesn't exist is not an error — the end state (no such secret) is
-// already true.
+// DeleteSecret removes a previously saved secret — every matching item,
+// service-wide (see SaveSecret's doc for why more than one can exist).
+// Deleting a name that doesn't exist is not an error — the end state (no
+// such secret) is already true.
 func (a *Agent) DeleteSecret(name string) *dbus.Error {
-	item, svc, err := a.findVaultItem(name)
+	svc, err := a.vault()
 	if err != nil {
 		return dbus.MakeFailedError(err)
 	}
-	if item == "" {
-		return nil
-	}
-	if err := svc.DeleteItem(item); err != nil {
+	if err := deleteAllVaultMatches(svc, name); err != nil {
 		return dbus.MakeFailedError(fmt.Errorf("agentd: deleting secret %q: %w", name, err))
 	}
 	return nil
@@ -148,18 +166,27 @@ func findGHKeyringItem(svc *secretservice.Client, hostname string) (item dbus.Ob
 	return fallback, fallbackUser, nil
 }
 
-// findVaultItem looks up one of CmdWarden's own vault entries by name.
-func (a *Agent) findVaultItem(name string) (dbus.ObjectPath, *secretservice.Client, error) {
-	svc, err := a.vault()
-	if err != nil {
-		return "", nil, err
-	}
+// findVaultMatches looks up every one of CmdWarden's own vault entries
+// currently matching name, service-wide (across every collection).
+func findVaultMatches(svc *secretservice.Client, name string) ([]dbus.ObjectPath, error) {
 	matches, err := svc.Search(map[string]string{"xdg:schema": vaultItemSchema, "name": name})
 	if err != nil {
-		return "", nil, fmt.Errorf("agentd: searching vault: %w", err)
+		return nil, fmt.Errorf("agentd: searching vault: %w", err)
 	}
-	if len(matches) == 0 {
-		return "", svc, nil
+	return matches, nil
+}
+
+// deleteAllVaultMatches deletes every existing item matching name. No
+// matches is not an error.
+func deleteAllVaultMatches(svc *secretservice.Client, name string) error {
+	matches, err := findVaultMatches(svc, name)
+	if err != nil {
+		return err
 	}
-	return matches[0], svc, nil
+	for _, item := range matches {
+		if err := svc.DeleteItem(item); err != nil {
+			return err
+		}
+	}
+	return nil
 }

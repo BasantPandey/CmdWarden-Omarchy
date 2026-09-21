@@ -18,6 +18,7 @@ import (
 	"github.com/BasantPandey/CmdWarden-Omarchy/internal/agentclient"
 	"github.com/BasantPandey/CmdWarden-Omarchy/internal/audit"
 	"github.com/BasantPandey/CmdWarden-Omarchy/internal/contracts"
+	"github.com/BasantPandey/CmdWarden-Omarchy/internal/ghauth"
 	"github.com/BasantPandey/CmdWarden-Omarchy/internal/ghclassify"
 	"github.com/BasantPandey/CmdWarden-Omarchy/internal/policy"
 )
@@ -25,6 +26,7 @@ import (
 const (
 	identityTimeout = 5 * time.Second
 	gateTimeout     = 6 * time.Minute
+	vaultTimeout    = 5 * time.Second
 )
 
 // Run is the shim's whole decision + dispatch flow. It returns the process
@@ -67,7 +69,7 @@ func Run(tool, realPath string, args []string, stderr io.Writer) int {
 
 	switch decision {
 	case contracts.DecisionAutoAllow, contracts.DecisionAllowOnce, contracts.DecisionSessionGrant, contracts.DecisionSessionAllow:
-		execReal(realPath, tool, args, stderr)
+		execReal(ctx, realPath, tool, args, stderr)
 		return 1 // only reached if exec itself failed
 	default:
 		fmt.Fprintf(stderr, "CmdWarden-Omarchy: %s denied (%s)\n", tool, reasonCode)
@@ -107,11 +109,45 @@ func resolveDecision(ctx context.Context, outcome contracts.PolicyOutcome, ident
 	}
 }
 
-func execReal(realPath, tool string, args []string, stderr io.Writer) {
+// execReal execs the real binary, replacing this process image entirely so
+// signals and the exit code pass straight through. For gh specifically, per
+// the ported Windows CmdWarden design ("on allow: child always gets
+// GH_TOKEN from vault"), it releases the vaulted token and injects it —
+// overriding any ambient GH_TOKEN, so the vault is authoritative once gh is
+// harden'd. If release fails (e.g. gh was never `cw harden gh`-ed), that's
+// not fatal to an already-decided allow: gh just falls back to its own
+// normal token resolution, same as if it were never harden'd at all.
+func execReal(ctx context.Context, realPath, tool string, args []string, stderr io.Writer) {
+	env := os.Environ()
+	if tool == "gh" {
+		secretName := contracts.GHVaultSecretName(ghauth.DefaultHost)
+		if token, err := agentclient.ReleaseSecret(ctx, vaultTimeout, secretName); err != nil {
+			fmt.Fprintf(stderr, "cw shim-exec: could not release %s from the vault, falling back to gh's own token resolution: %v\n", secretName, err)
+		} else {
+			// glibc's getenv (and most libc implementations) returns the
+			// *first* match in envp, so a naive append wouldn't actually
+			// override an ambient GH_TOKEN — the existing one has to go.
+			env = withoutEnv(env, "GH_TOKEN")
+			env = append(env, "GH_TOKEN="+token)
+		}
+	}
+
 	argv := append([]string{tool}, args...)
-	if err := syscall.Exec(realPath, argv, os.Environ()); err != nil {
+	if err := syscall.Exec(realPath, argv, env); err != nil {
 		fmt.Fprintf(stderr, "cw shim-exec: executing %s: %v\n", realPath, err)
 	}
+}
+
+// withoutEnv returns env with every "key=..." entry removed.
+func withoutEnv(env []string, key string) []string {
+	prefix := key + "="
+	filtered := env[:0]
+	for _, kv := range env {
+		if !strings.HasPrefix(kv, prefix) {
+			filtered = append(filtered, kv)
+		}
+	}
+	return filtered
 }
 
 // logDecision writes the audit row for this gate decision.
