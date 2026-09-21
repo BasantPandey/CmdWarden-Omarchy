@@ -13,25 +13,13 @@ import (
 
 const appDirName = "cmdwarden"
 
-// RuntimeDir returns $XDG_RUNTIME_DIR/cmdwarden, creating it (mode 0700) if
-// needed. This is where session-lifetime scratch state lives — it's tied to
-// the login session and is the correct place for anything that must not
-// outlive it.
-func RuntimeDir() (string, error) {
-	base := os.Getenv("XDG_RUNTIME_DIR")
-	if base == "" {
-		return "", fmt.Errorf("xdgpaths: XDG_RUNTIME_DIR is not set")
-	}
-	return ensureDir(filepath.Join(base, appDirName))
-}
-
 // RuntimeSocketPath returns $XDG_RUNTIME_DIR/<name> directly — deliberately
-// *not* nested under RuntimeDir()'s cmdwarden subdirectory, and deliberately
-// not creating anything. It's used for the agent's systemd socket-activation
-// unit, whose ListenStream=%t/<name> binds before cmdwarden-agent (the only
-// thing that would otherwise create that subdirectory) has ever run, so the
-// parent directory must already exist unconditionally — which
-// $XDG_RUNTIME_DIR itself, unlike a subdirectory of it, always does.
+// not nested under a cmdwarden subdirectory, and deliberately not creating
+// anything. It's used for the agent's systemd socket-activation unit, whose
+// ListenStream=%t/<name> binds before cmdwarden-agent (the only thing that
+// could otherwise create a subdirectory) has ever run, so the parent
+// directory must already exist unconditionally — which $XDG_RUNTIME_DIR
+// itself, unlike a subdirectory of it, always does.
 func RuntimeSocketPath(name string) (string, error) {
 	base := os.Getenv("XDG_RUNTIME_DIR")
 	if base == "" {
