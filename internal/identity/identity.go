@@ -42,18 +42,29 @@ var notLaunchers = map[string]bool{
 	"setsid": true, "xargs": true, "script": true, "login": true,
 }
 
+// Launcher is a resolved Identity Key together with the OS process it was
+// found at — the PID/StartTime pair a session grant (see internal/agentd's
+// session tracking) keys off of to know when "until it exits" has happened,
+// and to survive PID reuse (a start time recorded at grant time that no
+// longer matches the same PID means it's a different process now).
+type Launcher struct {
+	Key       contracts.IdentityKey
+	PID       int
+	StartTime uint64
+}
+
 // Resolve walks the ancestry of callerPID (not including callerPID itself —
 // it's cw's or the Shim's own process, never the Launcher) and returns the
-// Identity Key of the first non-shell ancestor found.
-func Resolve(callerPID int) (contracts.IdentityKey, error) {
+// first non-shell ancestor found.
+func Resolve(callerPID int) (Launcher, error) {
 	pid := callerPID
 	for depth := 0; depth < maxWalkDepth; depth++ {
 		ppid, err := parentOf(pid)
 		if err != nil {
-			return contracts.IdentityKey{}, fmt.Errorf("identity: reading parent of pid %d: %w", pid, err)
+			return Launcher{}, fmt.Errorf("identity: reading parent of pid %d: %w", pid, err)
 		}
 		if ppid <= 1 {
-			return contracts.IdentityKey{}, fmt.Errorf("identity: no recognized Launcher found walking ancestry from pid %d (reached the top of the process tree)", callerPID)
+			return Launcher{}, fmt.Errorf("identity: no recognized Launcher found walking ancestry from pid %d (reached the top of the process tree)", callerPID)
 		}
 		pid = ppid
 
@@ -68,9 +79,56 @@ func Resolve(callerPID int) (contracts.IdentityKey, error) {
 		if notLaunchers[name] {
 			continue
 		}
-		return classify(exePath, name)
+		key, err := classify(exePath, name)
+		if err != nil {
+			return Launcher{}, err
+		}
+		startTime, err := StartTime(pid)
+		if err != nil {
+			return Launcher{}, fmt.Errorf("identity: reading start time of pid %d: %w", pid, err)
+		}
+		return Launcher{Key: key, PID: pid, StartTime: startTime}, nil
 	}
-	return contracts.IdentityKey{}, fmt.Errorf("identity: ancestry walk from pid %d exceeded %d hops without finding a Launcher", callerPID, maxWalkDepth)
+	return Launcher{}, fmt.Errorf("identity: ancestry walk from pid %d exceeded %d hops without finding a Launcher", callerPID, maxWalkDepth)
+}
+
+// IsAlive reports whether pid is still running the same process StartTime
+// recorded — false either if the process is gone, or if the PID has since
+// been reused by an unrelated process (a new process always gets a
+// different start time).
+func IsAlive(pid int, startTime uint64) bool {
+	current, err := StartTime(pid)
+	if err != nil {
+		return false
+	}
+	return current == startTime
+}
+
+// StartTime reads a process's start time (field 22 of /proc/<pid>/stat, in
+// clock ticks since boot) — a cheap, kernel-provided way to tell "the same
+// process" from "a different process that got the same PID after the first
+// one exited."
+func StartTime(pid int) (uint64, error) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return 0, err
+	}
+	// The process name field (2nd, in parentheses) can itself contain
+	// spaces or parentheses, so scan for the *last* ")" rather than
+	// splitting on spaces naively.
+	closeParen := strings.LastIndexByte(string(data), ')')
+	if closeParen == -1 {
+		return 0, fmt.Errorf("unexpected /proc/%d/stat format", pid)
+	}
+	fields := strings.Fields(string(data)[closeParen+1:])
+	// After the ")", fields are: state(1) ppid(2) pgrp(3) session(4)
+	// tty_nr(5) tpgid(6) flags(7) ... starttime is field 22 overall, i.e.
+	// index 22-3=19 in this post-")" slice (1-indexed state is index 0).
+	const startTimeIndex = 19
+	if len(fields) <= startTimeIndex {
+		return 0, fmt.Errorf("unexpected /proc/%d/stat field count", pid)
+	}
+	return strconv.ParseUint(fields[startTimeIndex], 10, 64)
 }
 
 // ClassifyBinary resolves the Provenance Channel of a specific binary path

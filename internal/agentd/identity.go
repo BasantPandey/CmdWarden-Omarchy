@@ -16,15 +16,23 @@ import (
 // this the way it could if the CLI resolved its own identity and merely
 // told the agent the answer.
 func (a *Agent) ResolveIdentity(sender dbus.Sender) (channel string, tool string, path string, hash string, dbusErr *dbus.Error) {
+	launcher, err := a.resolveLauncher(sender)
+	if err != nil {
+		return "", "", "", "", dbus.MakeFailedError(err)
+	}
+	key := launcher.Key
+	return string(key.Channel), key.Tool, key.Path, key.Hash, nil
+}
+
+// resolveLauncher is ResolveIdentity's shared implementation, also used by
+// the session-grant logic (see gate.go), which additionally needs the
+// Launcher's PID/StartTime to know when "until it exits" has happened.
+func (a *Agent) resolveLauncher(sender dbus.Sender) (identity.Launcher, error) {
 	pid, err := a.callerPID(sender)
 	if err != nil {
-		return "", "", "", "", dbus.MakeFailedError(err)
+		return identity.Launcher{}, err
 	}
-	key, err := identity.Resolve(pid)
-	if err != nil {
-		return "", "", "", "", dbus.MakeFailedError(err)
-	}
-	return string(key.Channel), key.Tool, key.Path, key.Hash, nil
+	return identity.Resolve(pid)
 }
 
 func (a *Agent) callerPID(sender dbus.Sender) (int, error) {

@@ -152,13 +152,40 @@ func TestResolveWalksPastShellsToRealLauncher(t *testing.T) {
 		t.Fatal("sleep never appeared as a child of sh")
 	}
 
-	key, err := Resolve(sleepPID)
+	launcher, err := Resolve(sleepPID)
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
-	if key.Tool == "sh" || key.Tool == "dash" || key.Tool == "bash" {
-		t.Errorf("Resolve stopped at the shell instead of walking past it: %+v", key)
+	if launcher.Key.Tool == "sh" || launcher.Key.Tool == "dash" || launcher.Key.Tool == "bash" {
+		t.Errorf("Resolve stopped at the shell instead of walking past it: %+v", launcher)
 	}
+	if launcher.PID == 0 {
+		t.Error("expected a non-zero resolved Launcher PID")
+	}
+	if !IsAlive(launcher.PID, launcher.StartTime) {
+		t.Error("expected IsAlive to report the just-resolved Launcher as alive")
+	}
+}
+
+func TestStartTimeDetectsPIDReuseAsNotAlive(t *testing.T) {
+	if _, err := os.Stat("/proc/self/stat"); err != nil {
+		t.Skip("no /proc on this system")
+	}
+	if !IsAlive(os.Getpid(), mustStartTime(t, os.Getpid())) {
+		t.Error("expected the current process to report alive with its own start time")
+	}
+	if IsAlive(os.Getpid(), mustStartTime(t, os.Getpid())+1) {
+		t.Error("expected a mismatched start time to report not alive")
+	}
+}
+
+func mustStartTime(t *testing.T, pid int) uint64 {
+	t.Helper()
+	st, err := StartTime(pid)
+	if err != nil {
+		t.Fatalf("StartTime failed: %v", err)
+	}
+	return st
 }
 
 // findChildren does a one-shot scan of /proc for pid's direct children —

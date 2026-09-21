@@ -99,6 +99,8 @@ func resolveDecision(ctx context.Context, outcome contracts.PolicyOutcome, ident
 			return decision, "user-approved-once"
 		case contracts.DecisionSessionGrant:
 			return decision, "user-allowed-session"
+		case contracts.DecisionSessionAllow:
+			return decision, "session-allow-reused"
 		case contracts.DecisionDeny:
 			return decision, "user-denied"
 		default:

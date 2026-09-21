@@ -46,8 +46,27 @@ func (a *Agent) pendingGates() map[string]*pendingGate {
 // exits without answering, or gateTimeout elapses — every one of those
 // paths returns a decision, never an error, because "can't show the gate"
 // is itself a decision (Unavailable) under fail-closed semantics.
-func (a *Agent) RequestGate(identityKey, tool, commandLine, commandClassStr, policyLevel string, offerAllowSession bool) (string, *dbus.Error) {
+//
+// Before popping anything, it checks whether the real caller (resolved from
+// sender, never trusted from identityKey) already holds a live "Allow for
+// Session" grant covering this tool/class — if so, it returns
+// DecisionSessionAllow immediately, with no UI at all. A fresh
+// DecisionSessionGrant answer from the UI is recorded as a new grant for
+// that same caller before returning.
+func (a *Agent) RequestGate(identityKey, tool, commandLine, commandClassStr, policyLevel string, offerAllowSession bool, sender dbus.Sender) (string, *dbus.Error) {
+	class := contracts.CommandClass(commandClassStr)
+
+	launcher, launcherErr := a.resolveLauncher(sender)
+	if launcherErr != nil {
+		log.Printf("cmdwarden-agent: could not resolve caller for session-grant tracking, skipping it: %v", launcherErr)
+	} else if a.checkSessionGrant(launcher, tool, class) {
+		return string(contracts.DecisionSessionAllow), nil
+	}
+
 	decision := a.runGate(identityKey, tool, commandLine, commandClassStr, policyLevel, offerAllowSession)
+	if decision == contracts.DecisionSessionGrant && launcherErr == nil {
+		a.recordSessionGrant(launcher, tool, class)
+	}
 	return string(decision), nil
 }
 

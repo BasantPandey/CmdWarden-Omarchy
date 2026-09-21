@@ -31,6 +31,9 @@ type Agent struct {
 
 	gatesMu sync.Mutex
 	gates   map[string]*pendingGate
+
+	sessionMu sync.Mutex
+	sessions  map[string]*sessionGrant
 }
 
 // vault returns the agent's Secret Service session, or an error if it
