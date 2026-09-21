@@ -91,10 +91,10 @@ ShellRoot {
     }
 
     Rectangle {
-      width: 460
-      height: col.implicitHeight + 40
+      width: 580
+      height: col.implicitHeight + 48
       anchors.centerIn: parent
-      radius: 14
+      radius: 16
       color: "#181a20"
       border.color: root.classColor(root.commandClass)
       border.width: 2
@@ -102,31 +102,31 @@ ShellRoot {
       Column {
         id: col
         anchors.fill: parent
-        anchors.margins: 20
-        spacing: 12
+        anchors.margins: 24
+        spacing: 16
 
-        Text { text: "Approval needed"; color: "white"; font.bold: true; font.pixelSize: 18 }
+        Text { text: "Approval needed"; color: "white"; font.bold: true; font.pixelSize: 24 }
 
         Row {
-          spacing: 10
+          spacing: 12
           Rectangle {
-            width: 108; height: 22; radius: 4; color: root.classColor(root.commandClass)
-            Text { anchors.centerIn: parent; text: root.commandClass; color: "white"; font.pixelSize: 10; font.bold: true }
+            width: 132; height: 28; radius: 5; color: root.classColor(root.commandClass)
+            Text { anchors.centerIn: parent; text: root.commandClass; color: "white"; font.pixelSize: 13; font.bold: true }
           }
-          Text { text: "Launcher: " + root.identityKey; color: "#c7cbd4"; font.pixelSize: 13 }
+          Text { text: "Launcher: " + root.identityKey; color: "#c7cbd4"; font.pixelSize: 16 }
         }
 
         Text {
           text: "Tool: " + root.tool + "  ·  Policy level: " + root.policyLevel + " (does not auto-allow " + root.commandClass + ")"
-          color: "#9aa0ab"; font.pixelSize: 12; wrapMode: Text.Wrap; width: parent.width
+          color: "#9aa0ab"; font.pixelSize: 14; wrapMode: Text.Wrap; width: parent.width
         }
 
         Rectangle { width: parent.width; height: 1; color: "#333" }
 
-        Text { text: root.commandLine; color: "#e5e7eb"; font.family: "monospace"; font.pixelSize: 13; wrapMode: Text.Wrap; width: parent.width }
+        Text { text: root.commandLine; color: "#e5e7eb"; font.family: "monospace"; font.pixelSize: 16; wrapMode: Text.Wrap; width: parent.width }
 
         Row {
-          spacing: 10
+          spacing: 12
           width: parent.width
           Repeater {
             model: {
@@ -138,10 +138,10 @@ ShellRoot {
               return m
             }
             delegate: Rectangle {
-              width: root.offerAllowSession ? 138 : 168; height: 36; radius: 8
+              width: root.offerAllowSession ? 168 : 258; height: 46; radius: 9
               color: modelData.c
               border.color: "#666"; border.width: 1
-              Text { anchors.centerIn: parent; text: "[" + modelData.k + "] " + modelData.l; color: "white"; font.pixelSize: 12 }
+              Text { anchors.centerIn: parent; text: "[" + modelData.k + "] " + modelData.l; color: "white"; font.pixelSize: 14 }
               MouseArea { anchors.fill: parent; onClicked: root.respond(modelData.decision) }
             }
           }
