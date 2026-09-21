@@ -336,7 +336,6 @@ what comes after proving the model on one tool.
 
 ## License
 
-No license has been chosen yet for this repository. Until one is added,
-default copyright applies and no reuse rights are granted beyond what's
-needed to read the code on GitHub. Open an issue if you need clarity on
-this for a specific use case.
+[MIT](LICENSE) — same license as
+[CmdWarden](https://github.com/BasantPandey/CmdWarden), the Windows
+original this project is an Inspired Twin of.
