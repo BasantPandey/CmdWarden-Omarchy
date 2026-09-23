@@ -51,6 +51,14 @@ approved.
 comes from the actual identity resolution and policy decision described
 below.*
 
+![Recognized launcher and tool icons: Claude Code, Gemini, Codex, GitHub, Git, Docker, Azure, and the neutral fallback for anything else](docs/images/approval-gate-icons.png)
+
+*The Approval Gate shows a launcher icon next to "Launcher" and a tool icon
+next to "Tool" when it recognizes either — anything else falls back to a
+neutral glyph rather than guessing (see `internal/agentd/qml/icons/NOTICE.md`
+for where each icon comes from and why a couple are there despite sitting
+outside their brand owner's stated terms).*
+
 - **Resolves who's really calling** (`internal/identity`) by walking process
   ancestry to the first real Launcher and classifying its Provenance Channel
   — `mise:claude`, `pacman:foot`, or a path+hash Unmanaged identity — not a

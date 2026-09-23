@@ -42,6 +42,30 @@ ShellRoot {
     return "#616161"
   }
 
+  function classLabel(cls) {
+    if (cls === "read") return "Read"
+    if (cls === "write") return "Write"
+    if (cls === "secret-reveal") return "Secret Reveal"
+    return cls
+  }
+
+  function iconForLauncher(identityKey) {
+    var parts = identityKey.split(":")
+    var launcherTool = parts.length > 1 ? parts[1] : parts[0]
+    if (launcherTool === "claude") return "icons/claudecode.svg"
+    if (launcherTool === "gemini") return "icons/gemini.svg"
+    if (launcherTool === "codex") return "icons/openai.svg"
+    return "icons/unknown.svg"
+  }
+
+  function iconForTool(tool) {
+    if (tool === "gh") return "icons/github.svg"
+    if (tool === "git") return "icons/git.svg"
+    if (tool === "docker") return "icons/docker.svg"
+    if (tool === "az") return "icons/azure.svg"
+    return "icons/unknown.svg"
+  }
+
   // Submits the decision then quits — onExited (not onClicked) is what
   // actually closes the window, so a click can never close the surface
   // without the agent having heard back first.
@@ -111,14 +135,36 @@ ShellRoot {
           spacing: 12
           Rectangle {
             width: 132; height: 28; radius: 5; color: root.classColor(root.commandClass)
-            Text { anchors.centerIn: parent; text: root.commandClass; color: "white"; font.pixelSize: 13; font.bold: true }
+            Text { anchors.centerIn: parent; text: root.classLabel(root.commandClass); color: "white"; font.pixelSize: 13; font.bold: true }
           }
-          Text { text: "Launcher: " + root.identityKey; color: "#c7cbd4"; font.pixelSize: 16 }
+          Row {
+            spacing: 10
+            Image {
+              source: root.iconForLauncher(root.identityKey)
+              width: 24; height: 24
+              sourceSize.width: 24; sourceSize.height: 24
+              fillMode: Image.PreserveAspectFit
+              anchors.verticalCenter: parent.verticalCenter
+            }
+            Text { text: "Launcher: " + root.identityKey; color: "#c7cbd4"; font.pixelSize: 16; anchors.verticalCenter: parent.verticalCenter }
+          }
         }
 
-        Text {
-          text: "Tool: " + root.tool + "  ·  Policy level: " + root.policyLevel + " (does not auto-allow " + root.commandClass + ")"
-          color: "#9aa0ab"; font.pixelSize: 14; wrapMode: Text.Wrap; width: parent.width
+        Row {
+          spacing: 10
+          width: parent.width
+          Image {
+            source: root.iconForTool(root.tool)
+            width: 20; height: 20
+            sourceSize.width: 20; sourceSize.height: 20
+            fillMode: Image.PreserveAspectFit
+            anchors.verticalCenter: parent.verticalCenter
+          }
+          Text {
+            text: "Tool: " + root.tool + "  ·  Policy level: " + root.policyLevel + " (does not auto-allow " + root.commandClass + ")"
+            color: "#9aa0ab"; font.pixelSize: 14; wrapMode: Text.Wrap; width: col.width - 30
+            anchors.verticalCenter: parent.verticalCenter
+          }
         }
 
         Rectangle { width: parent.width; height: 1; color: "#333" }
