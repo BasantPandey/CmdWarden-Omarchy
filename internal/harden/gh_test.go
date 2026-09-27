@@ -3,12 +3,16 @@ package harden
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/BasantPandey/CmdWarden-Omarchy/internal/contracts"
 	"github.com/BasantPandey/CmdWarden-Omarchy/internal/ghauth"
 	"github.com/BasantPandey/CmdWarden-Omarchy/internal/shim"
 )
@@ -151,5 +155,144 @@ func TestHardenGHImportFailureLeavesNoPin(t *testing.T) {
 				t.Fatal("hosts.yml was rewritten")
 			}
 		})
+	}
+}
+
+// TestHardenGHReplacesPathPinWithOccupied starts from the old pacman Path
+// pin, where LookPath returns the PATH shim. HardenGH must uninstall that
+// shim and occupy the real binary instead of installing over the deleted
+// shim path.
+func TestHardenGHReplacesPathPinWithOccupied(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	xdgConfig := filepath.Join(home, ".config")
+	xdgData := filepath.Join(home, ".local", "share")
+	t.Setenv("XDG_CONFIG_HOME", xdgConfig)
+	t.Setenv("XDG_DATA_HOME", xdgData)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, ".local", "state"))
+	t.Setenv("MISE_DATA_DIR", filepath.Join(t.TempDir(), "unused-mise"))
+	t.Setenv("GH_CONFIG_DIR", t.TempDir())
+	for _, key := range []string{"GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"} {
+		t.Setenv(key, "")
+	}
+	t.Setenv("GH_TOKEN", "env-token-value")
+
+	binDir := t.TempDir()
+	cw := "#!/bin/sh\necho FAKE_CW \"$@\"\n"
+	pacman := "#!/bin/sh\necho \"$2 is owned by github-cli 1.0.0-1\"\n"
+	if err := os.WriteFile(filepath.Join(binDir, "cw"), []byte(cw), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "pacman"), []byte(pacman), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	realDir := t.TempDir()
+	realPath := filepath.Join(realDir, "gh")
+	if err := os.WriteFile(realPath, []byte("#!/bin/sh\necho REAL_GH \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	shimDir := filepath.Join(xdgData, "cmdwarden", "shims")
+	if err := os.MkdirAll(shimDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	shimScript := filepath.Join(shimDir, "gh")
+	if err := os.WriteFile(shimScript, []byte("#!/bin/sh\necho PATH_SHIM \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// The path shim is first, so a lookup before uninstall returns the
+	// script Uninstall deletes — not the real binary behind it.
+	t.Setenv("PATH", strings.Join([]string{shimDir, binDir, realDir, os.Getenv("PATH")}, string(os.PathListSeparator)))
+	found, err := exec.LookPath("gh")
+	if err != nil {
+		t.Fatalf("LookPath: %v", err)
+	}
+	if found != shimScript {
+		t.Fatalf("LookPath(gh) = %s, want the path shim %s", found, shimScript)
+	}
+
+	storeDir := filepath.Join(xdgConfig, "cmdwarden")
+	if err := os.MkdirAll(storeDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.MarshalIndent(map[string]shim.Pin{
+		"gh": {
+			Mode:           shim.ModePath,
+			Channel:        contracts.ChannelPacman,
+			ChannelTool:    "github-cli",
+			OriginalPath:   realPath,
+			RealBinaryPath: realPath,
+			ShimPath:       shimScript,
+			InstalledAt:    time.Now().UTC(),
+		},
+	}, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(storeDir, "shims.json"), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	origOpener := openImportKeyring
+	t.Cleanup(func() { openImportKeyring = origOpener })
+	openImportKeyring = func() (ghauth.Keyring, error) { return &memKeyring{}, nil }
+
+	pin, err := HardenGH(context.Background(), "github.com")
+	if err != nil {
+		t.Fatalf("HardenGH: %v", err)
+	}
+	resolved, err := filepath.EvalSymlinks(realPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pin.Mode != shim.ModeOccupied {
+		t.Fatalf("Mode = %q, want occupied", pin.Mode)
+	}
+	if pin.OriginalPath != resolved || pin.ShimPath != resolved {
+		t.Fatalf("occupied path = original %q shim %q, want %q", pin.OriginalPath, pin.ShimPath, resolved)
+	}
+	realAside := resolved + ".cmdwarden-real"
+	if pin.RealBinaryPath != realAside {
+		t.Fatalf("RealBinaryPath = %q, want %q", pin.RealBinaryPath, realAside)
+	}
+	moved, err := os.ReadFile(realAside)
+	if err != nil {
+		t.Fatalf("reading moved real binary: %v", err)
+	}
+	if !bytes.Contains(moved, []byte("REAL_GH")) {
+		t.Fatalf("moved file = %q, want the real binary", moved)
+	}
+	occupied, err := os.ReadFile(resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(occupied, []byte("shim-exec")) {
+		t.Fatalf("file at the real path = %q, want the occupied shim", occupied)
+	}
+	if _, err := os.Stat(shimScript); !os.IsNotExist(err) {
+		t.Fatalf("path shim %s still present, err=%v", shimScript, err)
+	}
+
+	bootstrap := filepath.Join(xdgData, "cmdwarden", "shim-env-bootstrap.sh")
+	if _, err := os.Stat(bootstrap); !os.IsNotExist(err) {
+		t.Fatalf("PATH bootstrap %s exists, err=%v", bootstrap, err)
+	}
+	envD := filepath.Join(home, ".config", "environment.d", "50-cmdwarden-shim.conf")
+	if _, err := os.Stat(envD); !os.IsNotExist(err) {
+		t.Fatalf("environment.d PATH prepend %s exists, err=%v", envD, err)
+	}
+	for _, rel := range []string{".profile", ".bashrc", ".zshrc", ".config/uwsm/env.d/50-cmdwarden"} {
+		data, err := os.ReadFile(filepath.Join(home, rel))
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			t.Fatalf("reading %s: %v", rel, err)
+		}
+		if strings.Contains(string(data), "# >>> cmdwarden shim path >>>") {
+			t.Fatalf("%s contains a PATH prepend block", rel)
+		}
 	}
 }

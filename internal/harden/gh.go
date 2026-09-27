@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"time"
 
@@ -36,22 +37,39 @@ const rpcTimeout = 15 * time.Second
 // internal/shim's Pin Drift) needs no manual unharden first: an existing
 // pin is removed before re-installing, so harden is always safe to just
 // run again.
+//
+// A Path pin wins LookPath, and Uninstall deletes that shim file. The
+// binary to occupy is the pin's real path, resolved before that delete.
+// Any other gh is resolved after Uninstall, so an Occupied shim is not
+// what gets installed over.
 func HardenGH(ctx context.Context, hostname string) (shim.Pin, error) {
 	if err := ctx.Err(); err != nil {
 		return shim.Pin{}, err
 	}
 
-	ghPath, err := exec.LookPath("gh")
+	existing, pinned, err := shim.GetPin("gh")
 	if err != nil {
-		return shim.Pin{}, fmt.Errorf("harden: gh not found on PATH: %w", err)
-	}
-
-	if _, ok, err := shim.GetPin("gh"); err != nil {
 		return shim.Pin{}, err
-	} else if ok {
+	}
+	// Capture the real binary before Uninstall. For a Path pin, LookPath
+	// returns the shim script, and Uninstall then deletes that file.
+	ghPath := ""
+	if pinned && existing.Mode == shim.ModePath {
+		ghPath = existing.RealBinaryPath
+	}
+	if pinned {
 		if err := shim.Uninstall("gh"); err != nil {
 			return shim.Pin{}, fmt.Errorf("harden: removing gh's existing pin before re-harden: %w", err)
 		}
+	}
+	if ghPath == "" {
+		ghPath, err = exec.LookPath("gh")
+		if err != nil {
+			return shim.Pin{}, fmt.Errorf("harden: gh not found on PATH: %w", err)
+		}
+	}
+	if _, err := os.Stat(ghPath); err != nil {
+		return shim.Pin{}, fmt.Errorf("harden: gh binary %s: %w", ghPath, err)
 	}
 
 	kr, err := openImportKeyring()
