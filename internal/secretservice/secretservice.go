@@ -75,15 +75,9 @@ func Open(conn *dbus.Conn) (*Client, error) {
 // creating it (unlocked, under the default login keyring backend) if none
 // exists yet.
 func (c *Client) EnsureCollection(label string) (dbus.ObjectPath, error) {
-	svc := c.conn.Object(serviceName, servicePath)
-
-	var collections []dbus.ObjectPath
-	variant, err := svc.GetProperty(ifaceService + ".Collections")
+	collections, err := c.collections()
 	if err != nil {
-		return "", fmt.Errorf("secretservice: reading Collections property: %w", err)
-	}
-	if err := variant.Store(&collections); err != nil {
-		return "", fmt.Errorf("secretservice: decoding Collections property: %w", err)
+		return "", fmt.Errorf("secretservice: %w", err)
 	}
 
 	for _, path := range collections {
@@ -100,23 +94,15 @@ func (c *Client) EnsureCollection(label string) (dbus.ObjectPath, error) {
 		return collection, nil
 	}
 
-	// No dedicated-collection UI available (e.g. no Secret Service
-	// prompter registered in this session — common headless/minimal
-	// desktop setups). Fall back to whatever collection the backend
-	// itself treats as default; our items still keep their own
-	// identifying attributes, so nothing else is affected by sharing it.
-	var defaultCollection dbus.ObjectPath
-	call := svc.Call(ifaceService+".ReadAlias", 0, "default")
-	if call.Err != nil {
-		return "", fmt.Errorf("secretservice: could not create a %q collection and ReadAlias(default) failed: %w", label, call.Err)
+	// Creating a labeled collection needs a prompter, which headless and
+	// minimal sessions do not have. Fall back to the collection gh itself
+	// would use: login when that collection exists, otherwise the default
+	// alias. Do not substitute a different alias while login exists.
+	wallet, err := c.ghWallet(collections)
+	if err != nil {
+		return "", fmt.Errorf("secretservice: could not create a %q collection: %w", label, err)
 	}
-	if err := call.Store(&defaultCollection); err != nil {
-		return "", fmt.Errorf("secretservice: decoding ReadAlias reply: %w", err)
-	}
-	if defaultCollection == nullObjectPath {
-		return "", fmt.Errorf("secretservice: could not create a %q collection and no default collection alias is set", label)
-	}
-	return defaultCollection, nil
+	return wallet, nil
 }
 
 // createCollectionPromptTimeout is deliberately short: CreateCollection

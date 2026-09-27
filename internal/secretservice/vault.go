@@ -17,6 +17,11 @@ const (
 	VaultItemSchema = "org.cmdwarden.Secret"
 )
 
+// loginCollectionPath is the collection gh's keyring (zalando/go-keyring
+// v0.2.8 GetLoginCollection) uses when that path is in Collections. The
+// default alias is the wallet only when login is absent.
+const loginCollectionPath dbus.ObjectPath = "/org/freedesktop/secrets/collection/login"
+
 // ErrServiceMissing, ErrServiceLocked, and ErrServiceWrongWallet are the
 // three ways a Secret Service cannot hold a token. Callers wrap them with
 // a keyring prefix; the text is part of the caller-visible error.
@@ -26,56 +31,106 @@ var (
 	ErrServiceWrongWallet = errors.New("Secret Service wallet cannot hold the token")
 )
 
-// classifyProbe decides whether a probed Secret Service can hold a token.
-// A service that cannot be reached is missing. A default collection that
-// will not unlock is locked. No default collection means this wallet is
-// not one that can hold the token. There is no separate result for a
-// desktop session, an SSH session, or a headless host.
-func classifyProbe(serviceErr error, alias dbus.ObjectPath, aliasErr, unlockErr error) error {
-	if serviceErr != nil {
-		return fmt.Errorf("%w: %v", ErrServiceMissing, serviceErr)
+// selectGHWallet reports the collection gh itself would unlock. The login
+// collection wins whenever it is in the service's collection list, even if
+// the default alias is unset or points somewhere else. The default alias is
+// the wallet only when login is absent.
+func selectGHWallet(collections []dbus.ObjectPath) (dbus.ObjectPath, bool) {
+	for _, path := range collections {
+		if path == loginCollectionPath {
+			return loginCollectionPath, true
+		}
 	}
-	if aliasErr != nil {
-		return fmt.Errorf("%w: %v", ErrServiceWrongWallet, aliasErr)
-	}
-	if alias == "" || alias == nullObjectPath {
-		return fmt.Errorf("%w: no default collection", ErrServiceWrongWallet)
-	}
+	return "", false
+}
+
+// classifyWalletUnlock checks the unlock result for the wallet
+// selectGHWallet chose. login is true when that wallet is the login
+// collection. A prompt or unlock error is locked. Unlocking some other
+// collection instead of login is the wrong wallet.
+func classifyWalletUnlock(login bool, target dbus.ObjectPath, unlocked []dbus.ObjectPath, unlockErr error) error {
 	if unlockErr != nil {
 		return fmt.Errorf("%w: %v", ErrServiceLocked, unlockErr)
+	}
+	if login {
+		if len(unlocked) != 1 || unlocked[0] != target {
+			return fmt.Errorf("%w: unlocked %v, not the login collection %s", ErrServiceWrongWallet, unlocked, target)
+		}
+		return nil
+	}
+	if len(unlocked) != 1 {
+		return fmt.Errorf("%w: default collection did not unlock", ErrServiceWrongWallet)
 	}
 	return nil
 }
 
-// ProbeHold reports whether the connected Secret Service can hold a token.
+// ProbeHold reports whether the connected Secret Service can hold a token
+// in the collection gh would use. There is no separate result for a desktop
+// session, an SSH session, or a headless host.
 func (c *Client) ProbeHold() error {
 	if c == nil || c.conn == nil {
-		return classifyProbe(errors.New("no Secret Service connection"), "", nil, nil)
+		return fmt.Errorf("%w: no Secret Service connection", ErrServiceMissing)
 	}
+	collections, err := c.collections()
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrServiceMissing, err)
+	}
+	target, err := c.ghWallet(collections)
+	if err != nil {
+		return err
+	}
+	_, login := selectGHWallet(collections)
+	unlocked, unlockErr := c.Unlock([]dbus.ObjectPath{target})
+	return classifyWalletUnlock(login, target, unlocked, unlockErr)
+}
+
+// ghWallet is the collection a token write may use: login when gh would
+// use login, otherwise the default alias. It does not substitute a
+// different alias while login exists.
+func (c *Client) ghWallet(collections []dbus.ObjectPath) (dbus.ObjectPath, error) {
+	if path, ok := selectGHWallet(collections); ok {
+		return path, nil
+	}
+	alias, err := c.readDefaultAlias()
+	return walletWithoutLogin(alias, err)
+}
+
+// walletWithoutLogin is the fallback when collection/login is not present.
+// An unset default alias cannot hold the token.
+func walletWithoutLogin(alias dbus.ObjectPath, aliasErr error) (dbus.ObjectPath, error) {
+	if aliasErr != nil {
+		return "", fmt.Errorf("%w: %v", ErrServiceWrongWallet, aliasErr)
+	}
+	if alias == "" || alias == nullObjectPath {
+		return "", fmt.Errorf("%w: no login collection and no default collection", ErrServiceWrongWallet)
+	}
+	return alias, nil
+}
+
+func (c *Client) collections() ([]dbus.ObjectPath, error) {
 	svc := c.conn.Object(serviceName, servicePath)
-	var serviceErr error
-	if _, err := svc.GetProperty(ifaceService + ".Collections"); err != nil {
-		serviceErr = err
+	variant, err := svc.GetProperty(ifaceService + ".Collections")
+	if err != nil {
+		return nil, fmt.Errorf("reading Collections property: %w", err)
 	}
-	var (
-		alias    dbus.ObjectPath
-		aliasErr error
-	)
-	if serviceErr == nil {
-		call := svc.Call(ifaceService+".ReadAlias", 0, "default")
-		if call.Err != nil {
-			aliasErr = call.Err
-		} else if err := call.Store(&alias); err != nil {
-			aliasErr = err
-		}
+	var collections []dbus.ObjectPath
+	if err := variant.Store(&collections); err != nil {
+		return nil, fmt.Errorf("decoding Collections property: %w", err)
 	}
-	var unlockErr error
-	if serviceErr == nil && aliasErr == nil && alias != "" && alias != nullObjectPath {
-		if _, err := c.Unlock([]dbus.ObjectPath{alias}); err != nil {
-			unlockErr = err
-		}
+	return collections, nil
+}
+
+func (c *Client) readDefaultAlias() (dbus.ObjectPath, error) {
+	svc := c.conn.Object(serviceName, servicePath)
+	call := svc.Call(ifaceService+".ReadAlias", 0, "default")
+	if call.Err != nil {
+		return "", call.Err
 	}
-	return classifyProbe(serviceErr, alias, aliasErr, unlockErr)
+	var alias dbus.ObjectPath
+	if err := call.Store(&alias); err != nil {
+		return "", err
+	}
+	return alias, nil
 }
 
 // SaveNamed stores value under name, replacing every existing match.

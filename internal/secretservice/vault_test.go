@@ -7,33 +7,66 @@ import (
 	"github.com/godbus/dbus/v5"
 )
 
-func TestClassifyProbe(t *testing.T) {
-	cases := []struct {
-		name       string
-		serviceErr error
-		alias      dbus.ObjectPath
-		aliasErr   error
-		unlockErr  error
-		want       error
-	}{
-		{name: "ok", alias: "/org/freedesktop/secrets/collection/login"},
-		{name: "missing", serviceErr: errors.New("no name owner"), want: ErrServiceMissing},
-		{name: "locked", alias: "/org/freedesktop/secrets/collection/login", unlockErr: errors.New("prompt was dismissed"), want: ErrServiceLocked},
-		{name: "no default collection", alias: nullObjectPath, want: ErrServiceWrongWallet},
-		{name: "alias lookup failed", aliasErr: errors.New("ReadAlias failed"), want: ErrServiceWrongWallet},
+func TestSelectGHWalletPrefersLogin(t *testing.T) {
+	other := dbus.ObjectPath("/org/freedesktop/secrets/collection/other")
+	login := loginCollectionPath
+
+	path, ok := selectGHWallet([]dbus.ObjectPath{other, login})
+	if !ok || path != login {
+		t.Fatalf("selectGHWallet = (%s, %v), want login", path, ok)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			err := classifyProbe(tc.serviceErr, tc.alias, tc.aliasErr, tc.unlockErr)
-			if tc.want == nil {
-				if err != nil {
-					t.Fatalf("classifyProbe = %v, want nil", err)
-				}
-				return
-			}
-			if !errors.Is(err, tc.want) {
-				t.Fatalf("classifyProbe = %v, want %v", err, tc.want)
-			}
-		})
+
+	// Login present means the default alias is not consulted. An unset
+	// alias must not turn this into a wrong wallet.
+	if _, ok := selectGHWallet([]dbus.ObjectPath{login}); !ok {
+		t.Fatal("login collection was ignored")
 	}
+
+	if _, ok := selectGHWallet([]dbus.ObjectPath{other}); ok {
+		t.Fatal("a non-login collection was treated as gh's login wallet")
+	}
+	if _, ok := selectGHWallet(nil); ok {
+		t.Fatal("empty collection list selected a wallet")
+	}
+}
+
+func TestClassifyWalletUnlock(t *testing.T) {
+	login := loginCollectionPath
+	other := dbus.ObjectPath("/org/freedesktop/secrets/collection/other")
+
+	t.Run("login unlocks", func(t *testing.T) {
+		if err := classifyWalletUnlock(true, login, []dbus.ObjectPath{login}, nil); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("locked login is not accepted via another collection", func(t *testing.T) {
+		err := classifyWalletUnlock(true, login, nil, errors.New("prompt was dismissed"))
+		if !errors.Is(err, ErrServiceLocked) {
+			t.Fatalf("err = %v, want locked", err)
+		}
+		err = classifyWalletUnlock(true, login, []dbus.ObjectPath{other}, nil)
+		if !errors.Is(err, ErrServiceWrongWallet) {
+			t.Fatalf("err = %v, want wrong wallet", err)
+		}
+	})
+
+	t.Run("default alias unlocks when login is absent", func(t *testing.T) {
+		alias := dbus.ObjectPath("/org/freedesktop/secrets/collection/default")
+		if err := classifyWalletUnlock(false, alias, []dbus.ObjectPath{alias}, nil); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("missing default alias is the wrong wallet", func(t *testing.T) {
+		_, err := walletWithoutLogin(nullObjectPath, nil)
+		if !errors.Is(err, ErrServiceWrongWallet) {
+			t.Fatalf("err = %v, want wrong wallet", err)
+		}
+		alias := dbus.ObjectPath("/org/freedesktop/secrets/collection/default")
+		got, err := walletWithoutLogin(alias, nil)
+		if err != nil || got != alias {
+			t.Fatalf("walletWithoutLogin = (%s, %v), want the default collection", got, err)
+		}
+	})
 }
