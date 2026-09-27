@@ -1,7 +1,9 @@
 package shim
 
 import (
+	"bytes"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 )
@@ -59,6 +61,12 @@ func checkOne(pin Pin) (*Drift, error) {
 				Reason: fmt.Sprintf("now resolves to %s, not the pinned %s (a new install — e.g. a mise version bump — appeared after harden time)", concrete, pin.OriginalPath),
 			}, nil
 		}
+		// A pacman upgrade (and any other in-place overwrite) keeps the
+		// same path, so a path comparison alone still looks pinned. The
+		// file at that path has to still be the shim.
+		if replaced, reason := occupiedFileReplaced(pin); replaced {
+			return &Drift{Tool: pin.Tool, Pin: pin, Current: concrete, Reason: reason}, nil
+		}
 	case ModePath:
 		if resolved != pin.ShimPath {
 			return &Drift{
@@ -70,4 +78,22 @@ func checkOne(pin Pin) (*Drift, error) {
 		return &Drift{Tool: pin.Tool, Pin: pin, Current: resolved, Reason: fmt.Sprintf("unrecognized shim mode %q", pin.Mode)}, nil
 	}
 	return nil, nil
+}
+
+// shimMarker is the distinctive token renderScript bakes into every shim.
+// A package upgrade that overwrites the occupied path with the real binary
+// will not contain it.
+const shimMarker = "shim-exec"
+
+// occupiedFileReplaced reports whether the file at the occupied path is no
+// longer the shim script Install wrote there.
+func occupiedFileReplaced(pin Pin) (bool, string) {
+	data, err := os.ReadFile(pin.OriginalPath)
+	if err != nil {
+		return true, fmt.Sprintf("occupied file at %s was replaced in place (pin drift): %v", pin.OriginalPath, err)
+	}
+	if !bytes.Contains(data, []byte(shimMarker)) {
+		return true, fmt.Sprintf("occupied file at %s was replaced in place (pin drift — the shim no longer occupies that path)", pin.OriginalPath)
+	}
+	return false, ""
 }

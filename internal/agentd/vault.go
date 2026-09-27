@@ -5,19 +5,8 @@ import (
 
 	"github.com/godbus/dbus/v5"
 
-	"github.com/BasantPandey/CmdWarden-Omarchy/internal/contracts"
 	"github.com/BasantPandey/CmdWarden-Omarchy/internal/ghauth"
-	"github.com/BasantPandey/CmdWarden-Omarchy/internal/secretservice"
 )
-
-// vaultCollectionLabel names CmdWarden-Omarchy's own Secret Service
-// collection. See secretservice.EnsureCollection for the headless fallback
-// when the backend can't prompt to create a new one.
-const vaultCollectionLabel = "CmdWarden"
-
-// vaultItemSchema tags every item this vault creates, distinguishing them
-// from gh's own (or anyone else's) items sharing the same collection.
-const vaultItemSchema = "org.cmdwarden.Secret"
 
 // SaveSecret stores value under name in CmdWarden-Omarchy's vault,
 // overwriting any existing secret with that name.
@@ -39,16 +28,8 @@ func (a *Agent) SaveSecret(name string, value string) *dbus.Error {
 	if err != nil {
 		return dbus.MakeFailedError(err)
 	}
-	if err := deleteAllVaultMatches(svc, name); err != nil {
-		return dbus.MakeFailedError(fmt.Errorf("agentd: clearing existing copies of secret %q before save: %w", name, err))
-	}
-	collection, err := svc.EnsureCollection(vaultCollectionLabel)
-	if err != nil {
-		return dbus.MakeFailedError(fmt.Errorf("agentd: resolving vault collection: %w", err))
-	}
-	attrs := map[string]string{"xdg:schema": vaultItemSchema, "name": name}
-	if _, err := svc.CreateOrReplaceItem(collection, "CmdWarden secret: "+name, attrs, []byte(value)); err != nil {
-		return dbus.MakeFailedError(fmt.Errorf("agentd: saving secret %q: %w", name, err))
+	if err := svc.SaveNamed(name, value); err != nil {
+		return dbus.MakeFailedError(fmt.Errorf("agentd: %w", err))
 	}
 	return nil
 }
@@ -62,18 +43,14 @@ func (a *Agent) ReleaseSecret(name string) (string, *dbus.Error) {
 	if err != nil {
 		return "", dbus.MakeFailedError(err)
 	}
-	matches, err := findVaultMatches(svc, name)
+	value, ok, err := svc.LookupNamed(name)
 	if err != nil {
-		return "", dbus.MakeFailedError(err)
+		return "", dbus.MakeFailedError(fmt.Errorf("agentd: %w", err))
 	}
-	if len(matches) == 0 {
+	if !ok {
 		return "", dbus.MakeFailedError(fmt.Errorf("agentd: no vault secret named %q", name))
 	}
-	value, err := svc.GetSecretValue(matches[0])
-	if err != nil {
-		return "", dbus.MakeFailedError(fmt.Errorf("agentd: releasing secret %q: %w", name, err))
-	}
-	return string(value), nil
+	return value, nil
 }
 
 // DeleteSecret removes a previously saved secret — every matching item,
@@ -85,108 +62,28 @@ func (a *Agent) DeleteSecret(name string) *dbus.Error {
 	if err != nil {
 		return dbus.MakeFailedError(err)
 	}
-	if err := deleteAllVaultMatches(svc, name); err != nil {
+	if err := svc.DeleteNamed(name); err != nil {
 		return dbus.MakeFailedError(fmt.Errorf("agentd: deleting secret %q: %w", name, err))
 	}
 	return nil
 }
 
-// ImportGHToken finds gh's currently active OAuth token for hostname (env
-// var, then hosts.yml plaintext, then gh's own Secret Service keyring entry
-// — gh's own real resolution order) and imports it into a CmdWarden vault
-// entry named "gh:<hostname>". It returns a human-readable, secret-free
-// description of where the token came from.
+// ImportGHToken finds gh's currently active OAuth token for hostname and
+// imports it into a CmdWarden vault entry named "gh:<hostname>". It returns
+// a human-readable, secret-free description of where the token came from.
+//
+// A missing, locked, or wrong-wallet Secret Service, and a token whose only
+// active source is plaintext hosts.yml, fail here — before the shim
+// installer runs. hosts.yml is not written. The source label is returned
+// only after the vault write succeeds.
 func (a *Agent) ImportGHToken(hostname string) (string, *dbus.Error) {
-	token, source, err := ghauth.TokenFromEnvOrConfig(hostname)
+	kr := a.tokenKeyring
+	if kr == nil && a.secretSvc != nil {
+		kr = ghauth.NewLiveKeyring(a.secretSvc)
+	}
+	source, err := ghauth.Import(hostname, kr)
 	if err != nil {
-		return "", dbus.MakeFailedError(fmt.Errorf("agentd: reading gh's own config: %w", err))
-	}
-
-	if token == "" {
-		svc, svcErr := a.vault()
-		if svcErr != nil {
-			return "", dbus.MakeFailedError(svcErr)
-		}
-		item, activeUser, findErr := findGHKeyringItem(svc, hostname)
-		if findErr != nil {
-			return "", dbus.MakeFailedError(fmt.Errorf("agentd: searching gh's keyring entry: %w", findErr))
-		}
-		if item == "" {
-			return "", dbus.MakeFailedError(fmt.Errorf(
-				"agentd: no active gh token found for %q via env vars, hosts.yml, or the %q keyring entry — is gh logged in?",
-				hostname, ghauth.KeyringServiceName(hostname)))
-		}
-		value, getErr := svc.GetSecretValue(item)
-		if getErr != nil {
-			return "", dbus.MakeFailedError(fmt.Errorf("agentd: reading gh's keyring entry: %w", getErr))
-		}
-		token = string(value)
-		source = "keyring (" + ghauth.KeyringServiceName(hostname) + ", user " + activeUser + ")"
-	}
-
-	name := contracts.GHVaultSecretName(hostname)
-	if err := a.SaveSecret(name, token); err != nil {
-		return "", err
+		return "", dbus.MakeFailedError(err)
 	}
 	return source, nil
-}
-
-// findGHKeyringItem searches for gh's own Secret Service entry for
-// hostname, preferring one whose "username" attribute matches hosts.yml's
-// recorded active user when there's more than one candidate (see the
-// research doc: a stale entry with an empty/different username can coexist
-// with the real one).
-func findGHKeyringItem(svc *secretservice.Client, hostname string) (item dbus.ObjectPath, username string, err error) {
-	matches, err := svc.Search(map[string]string{"service": ghauth.KeyringServiceName(hostname)})
-	if err != nil {
-		return "", "", err
-	}
-	if len(matches) == 0 {
-		return "", "", nil
-	}
-
-	activeUser, _ := ghauth.ActiveUser(hostname) // best-effort; "" is fine
-
-	var fallback dbus.ObjectPath
-	var fallbackUser string
-	for _, m := range matches {
-		attrs, attrErr := svc.ItemAttributes(m)
-		if attrErr != nil {
-			continue
-		}
-		user := attrs["username"]
-		if activeUser != "" && user == activeUser {
-			return m, user, nil
-		}
-		if fallback == "" || (fallbackUser == "" && user != "") {
-			fallback = m
-			fallbackUser = user
-		}
-	}
-	return fallback, fallbackUser, nil
-}
-
-// findVaultMatches looks up every one of CmdWarden's own vault entries
-// currently matching name, service-wide (across every collection).
-func findVaultMatches(svc *secretservice.Client, name string) ([]dbus.ObjectPath, error) {
-	matches, err := svc.Search(map[string]string{"xdg:schema": vaultItemSchema, "name": name})
-	if err != nil {
-		return nil, fmt.Errorf("agentd: searching vault: %w", err)
-	}
-	return matches, nil
-}
-
-// deleteAllVaultMatches deletes every existing item matching name. No
-// matches is not an error.
-func deleteAllVaultMatches(svc *secretservice.Client, name string) error {
-	matches, err := findVaultMatches(svc, name)
-	if err != nil {
-		return err
-	}
-	for _, item := range matches {
-		if err := svc.DeleteItem(item); err != nil {
-			return err
-		}
-	}
-	return nil
 }

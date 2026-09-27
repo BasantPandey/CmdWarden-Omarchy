@@ -22,7 +22,7 @@ import (
 var table = map[string]contracts.CommandClass{
 	// auth: token-export and most auth-state-changing commands.
 	"auth token":                contracts.ClassSecretReveal,
-	"auth status":               contracts.ClassRead, // upgraded to secret-reveal by --show-token, see Classify
+	"auth status":               contracts.ClassSecretReveal, // every flag, including none and --show-token
 	"auth login":                contracts.ClassWrite,
 	"auth refresh":              contracts.ClassWrite,
 	"auth logout":               contracts.ClassWrite,
@@ -128,7 +128,7 @@ var table = map[string]contracts.CommandClass{
 	"workflow disable": contracts.ClassWrite,
 
 	"run list":     contracts.ClassRead,
-	"run view":     contracts.ClassRead,
+	"run view":     contracts.ClassRead, // --log and --log-failed upgrade to secret-reveal, see Classify
 	"run watch":    contracts.ClassRead,
 	"run download": contracts.ClassRead,
 	"run cancel":   contracts.ClassWrite,
@@ -184,17 +184,18 @@ var table = map[string]contracts.CommandClass{
 	"alias import": contracts.ClassWrite,
 
 	// codespace
-	"codespace list":    contracts.ClassRead,
-	"codespace view":    contracts.ClassRead,
-	"codespace ports":   contracts.ClassRead,
-	"codespace logs":    contracts.ClassRead,
-	"codespace create":  contracts.ClassWrite,
-	"codespace delete":  contracts.ClassWrite,
-	"codespace stop":    contracts.ClassWrite,
-	"codespace ssh":     contracts.ClassWrite,
-	"codespace code":    contracts.ClassWrite,
-	"codespace edit":    contracts.ClassWrite,
-	"codespace rebuild": contracts.ClassWrite,
+	"codespace list":          contracts.ClassRead,
+	"codespace view":          contracts.ClassRead,
+	"codespace ports":         contracts.ClassRead,
+	"codespace ports forward": contracts.ClassSecretReveal,
+	"codespace logs":          contracts.ClassRead,
+	"codespace create":        contracts.ClassWrite,
+	"codespace delete":        contracts.ClassWrite,
+	"codespace stop":          contracts.ClassWrite,
+	"codespace ssh":           contracts.ClassWrite,
+	"codespace code":          contracts.ClassWrite,
+	"codespace edit":          contracts.ClassWrite,
+	"codespace rebuild":       contracts.ClassWrite,
 
 	// ruleset (read-only surface in gh today)
 	"ruleset list":  contracts.ClassRead,
@@ -256,12 +257,18 @@ func nonFlagTokens(args []string) []string {
 	return tokens
 }
 
-// applyFlagOverrides upgrades a base classification when a specific flag
-// changes what the command actually does — currently just `gh auth status
-// --show-token`, which turns an otherwise-read command into secret-reveal.
+// applyFlagOverrides upgrades a base classification when a flag or a longer
+// spelling changes what the command reveals. `gh auth status` is
+// secret-reveal for every flag (including no flag and `--show-token`).
+// `gh run view` stays read unless `--log` or `--log-failed` is present.
 func applyFlagOverrides(path string, args []string, base contracts.CommandClass) contracts.CommandClass {
-	if path == "auth status" && hasFlag(args, "--show-token") {
+	switch path {
+	case "auth status":
 		return contracts.ClassSecretReveal
+	case "run view":
+		if hasFlag(args, "--log") || hasFlag(args, "--log-failed") {
+			return contracts.ClassSecretReveal
+		}
 	}
 	return base
 }

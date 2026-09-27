@@ -5,10 +5,10 @@
 // oauth_token in hosts.yml, (3) the Secret Service keyring entry gh itself
 // wrote under service "gh:<hostname>".
 //
-// This package only implements (1) and (2) — pure env/file I/O, no D-Bus.
-// (3) needs a live Secret Service session, which only the agent holds; see
-// internal/secretservice and KeyringServiceName below, which the agent uses
-// as the fallback when this package finds nothing.
+// Import refuses (2): a plaintext hosts.yml token is not copied, and
+// hosts.yml is never written. It also refuses to store anything when the
+// Secret Service is missing, locked, or not a wallet that can hold the
+// token. The agent and `cw harden gh` both call Import.
 package ghauth
 
 import (

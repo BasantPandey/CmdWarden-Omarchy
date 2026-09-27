@@ -132,9 +132,9 @@ func StartTime(pid int) (uint64, error) {
 }
 
 // ClassifyBinary resolves the Provenance Channel of a specific binary path
-// directly, without any ancestry walk — used by the Shim installer (#7) to
-// decide Occupied vs. Path Shim for a given tool's resolved path, the same
-// classification Resolve uses for a Launcher found by ancestry.
+// directly, without any ancestry walk — used by the Shim installer to decide
+// whether a tool's resolved path can be occupied, the same classification
+// Resolve uses for a Launcher found by ancestry.
 func ClassifyBinary(path string) (contracts.IdentityKey, error) {
 	return classify(path, filepath.Base(path))
 }

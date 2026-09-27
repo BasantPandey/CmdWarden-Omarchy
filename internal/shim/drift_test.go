@@ -3,6 +3,7 @@ package shim
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -30,6 +31,44 @@ func TestDetectDriftCleanForFreshInstall(t *testing.T) {
 	if len(drifts) != 0 {
 		t.Errorf("expected no drift right after install, got %+v", drifts)
 	}
+}
+
+func TestDetectDriftOccupiedFileReplacedInPlace(t *testing.T) {
+	home := isolateUserDirs(t)
+	putFakeCWOnPath(t)
+	putFakePacmanOnPath(t, "github-cli")
+	t.Setenv("MISE_DATA_DIR", filepath.Join(t.TempDir(), "unused-mise"))
+
+	toolPath := filepath.Join(t.TempDir(), "bin", "gh")
+	writeFakeBinary(t, toolPath, "REAL_GH")
+	t.Setenv("PATH", filepath.Dir(toolPath)+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	if _, err := Install("gh", toolPath); err != nil {
+		t.Fatalf("Install failed: %v", err)
+	}
+	drifts, err := DetectDrift()
+	if err != nil {
+		t.Fatalf("DetectDrift failed: %v", err)
+	}
+	if len(drifts) != 0 {
+		t.Fatalf("expected no drift right after install, got %+v", drifts)
+	}
+
+	// A later pacman upgrade overwrites the occupied path in place. The
+	// path still matches the pin, which is exactly what a path-only check misses.
+	writeFakeBinary(t, toolPath, "UPGRADED_GH")
+
+	drifts, err = DetectDrift()
+	if err != nil {
+		t.Fatalf("DetectDrift failed: %v", err)
+	}
+	if len(drifts) != 1 || drifts[0].Tool != "gh" {
+		t.Fatalf("expected pin drift for the replaced gh shim, got %+v", drifts)
+	}
+	if !strings.Contains(drifts[0].Reason, "replaced in place") {
+		t.Errorf("Reason = %q, want it to report the in-place replacement", drifts[0].Reason)
+	}
+	assertNoPathPrepend(t, home)
 }
 
 func TestDetectDriftFlagsNewVersionAfterUpgrade(t *testing.T) {

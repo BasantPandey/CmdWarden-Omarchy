@@ -12,20 +12,35 @@ import (
 
 	"github.com/BasantPandey/CmdWarden-Omarchy/internal/agentclient"
 	"github.com/BasantPandey/CmdWarden-Omarchy/internal/contracts"
+	"github.com/BasantPandey/CmdWarden-Omarchy/internal/ghauth"
 	"github.com/BasantPandey/CmdWarden-Omarchy/internal/shim"
 )
+
+// openImportKeyring opens the Secret Service session HardenGH imports into.
+// It is the real opener in production. Tests replace it with a fake or
+// absent keyring so a failure is the keyring or plaintext error rather than
+// an unreachable agent.
+var openImportKeyring = ghauth.OpenKeyring
 
 const rpcTimeout = 15 * time.Second
 
 // HardenGH resolves gh's Provenance Channel, imports its active token into
-// the vault, installs the Shim (Occupied or Path, per gh's channel), and
-// records the pin.
+// the vault, installs the Shim (Occupied for mise and pacman), and records
+// the pin.
 //
-// Re-running it after gh has moved (e.g. a mise version bump orphaned the
-// old pin — see internal/shim's Pin Drift) needs no manual unharden first:
-// an existing pin is removed before re-installing, so harden is always safe
-// to just run again.
+// The import runs before the shim is installed, and it is the same
+// ghauth.Import the agent's ImportGHToken method runs. A failed import —
+// missing, locked, or wrong-wallet Secret Service, or a plaintext
+// hosts.yml token — returns before Install, so no pin is saved. Re-running
+// after gh has moved (e.g. a mise version bump orphaned the old pin — see
+// internal/shim's Pin Drift) needs no manual unharden first: an existing
+// pin is removed before re-installing, so harden is always safe to just
+// run again.
 func HardenGH(ctx context.Context, hostname string) (shim.Pin, error) {
+	if err := ctx.Err(); err != nil {
+		return shim.Pin{}, err
+	}
+
 	ghPath, err := exec.LookPath("gh")
 	if err != nil {
 		return shim.Pin{}, fmt.Errorf("harden: gh not found on PATH: %w", err)
@@ -39,7 +54,13 @@ func HardenGH(ctx context.Context, hostname string) (shim.Pin, error) {
 		}
 	}
 
-	source, err := agentclient.ImportGHToken(ctx, rpcTimeout, hostname)
+	kr, err := openImportKeyring()
+	if err != nil {
+		return shim.Pin{}, fmt.Errorf("harden: importing gh's active token: %w", err)
+	}
+	defer kr.Close()
+
+	source, err := ghauth.Import(hostname, kr)
 	if err != nil {
 		return shim.Pin{}, fmt.Errorf("harden: importing gh's active token: %w", err)
 	}

@@ -16,6 +16,7 @@ import (
 	"github.com/godbus/dbus/v5"
 
 	"github.com/BasantPandey/CmdWarden-Omarchy/internal/contracts"
+	"github.com/BasantPandey/CmdWarden-Omarchy/internal/ghauth"
 	"github.com/BasantPandey/CmdWarden-Omarchy/internal/secretservice"
 )
 
@@ -28,6 +29,10 @@ type Agent struct {
 
 	conn      *dbus.Conn
 	secretSvc *secretservice.Client
+	// tokenKeyring, when set, is the Secret Service session ImportGHToken
+	// stores into. Run leaves it nil and ImportGHToken builds one from
+	// secretSvc.
+	tokenKeyring ghauth.Keyring
 
 	gatesMu sync.Mutex
 	gates   map[string]*pendingGate

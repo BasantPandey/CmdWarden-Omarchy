@@ -13,8 +13,11 @@ import (
 
 // Install shims tool, whose real binary currently resolves to targetPath,
 // branching by targetPath's Provenance Channel (see internal/identity):
-// Occupied Shim for mise, Path Shim for pacman. A targetPath that resolves
-// as Unmanaged can't be meaningfully pinned this way and is rejected.
+// Occupied Shim for both mise and pacman. The real file is moved aside and
+// the shim is written at that same path, so an absolute invocation, a reset
+// PATH, command -p, and a clean shell all hit the shim. No PATH prepend is
+// installed. A targetPath that resolves as Unmanaged can't be meaningfully
+// pinned this way and is rejected.
 func Install(tool, targetPath string) (Pin, error) {
 	if _, alreadyPinned, err := GetPin(tool); err != nil {
 		return Pin{}, err
@@ -33,10 +36,8 @@ func Install(tool, targetPath string) (Pin, error) {
 	}
 
 	switch key.Channel {
-	case contracts.ChannelMise:
+	case contracts.ChannelMise, contracts.ChannelPacman:
 		return installOccupied(tool, targetPath, key, cwPath)
-	case contracts.ChannelPacman:
-		return installPath(tool, targetPath, key, cwPath)
 	default:
 		return Pin{}, fmt.Errorf("shim: %s resolves as an Unmanaged Launcher (%s) — cw only shims pacman- or mise-provenance binaries", targetPath, key)
 	}
@@ -83,10 +84,12 @@ func installOccupied(tool, targetPath string, key contracts.IdentityKey, cwPath 
 	return pin, nil
 }
 
-// installPath leaves the real (pacman-owned) binary completely untouched
-// and installs a same-named Shim script in CmdWarden's own directory,
-// prepended on PATH (see pathshim.go) so ordinary PATH resolution finds it
-// first.
+// installPath leaves the real binary completely untouched and installs a
+// same-named Shim script in CmdWarden's own directory, prepended on PATH
+// (see pathshim.go). Install no longer selects this shape: a PATH prepend
+// is skipped by an absolute path, a reset PATH, command -p, and a clean
+// shell. The function remains so an existing Path pin can still be reasoned
+// about next to removePathBootstrap.
 func installPath(tool, targetPath string, key contracts.IdentityKey, cwPath string) (Pin, error) {
 	if err := ensurePathBootstrap(); err != nil {
 		return Pin{}, err

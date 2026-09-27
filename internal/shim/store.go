@@ -2,14 +2,13 @@
 // uses to intercept a gated tool's invocation, branching by the target
 // binary's Provenance Channel (see internal/identity):
 //
-//   - Occupied Shim (mise-provenance): the real binary is renamed aside to
-//     "<path>.cmdwarden-real" and a tiny shell script takes its exact file
-//     path — every resolution path that used to reach the real binary now
-//     reaches the Shim instead, with no PATH tricks needed.
-//   - Path Shim (pacman-provenance): the real binary is left completely
-//     untouched. A same-named script is installed in a CmdWarden-owned
-//     directory that's prepended on PATH (see pathshim.go), so ordinary
-//     PATH lookup finds the Shim first.
+//   - Occupied Shim (mise- and pacman-provenance): the real binary is renamed
+//     aside to "<path>.cmdwarden-real" and a tiny shell script takes its
+//     exact file path — every resolution path that used to reach the real
+//     binary now reaches the Shim instead, with no PATH prepend.
+//   - Path Shim: an older shape that prepended a CmdWarden directory on
+//     PATH. Install does not create these anymore. Uninstall and drift
+//     detection still understand a pin that was recorded in this mode.
 //
 // Both shapes exec `cw shim-exec` (see cmd's shim-exec handler), which does
 // the actual identity/policy/gate dispatch and finally execs the real
